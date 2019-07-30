@@ -1,0 +1,116 @@
+---
+title: Predict the exercise
+subtitle: Assignment on the practical machine learning class of coursera's data science specialisation
+author: "El Grueff - A. Singer"
+date: "30/07/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(caret)
+require(dplyr)
+require(ggplot2)
+require(kableExtra)
+require(rattle)
+require(randomForest)
+```
+
+## Synopsis
+This courses assignment was to take a dataset of recorded movements which fall into 5 categories and define a prediction algorithm.
+The methods used in this paper are a decision tree (not accurate enough) and finally a random forest with 500 trees.
+The estimated accuracy of the final model is nearly one and in the validation set, less than 1% of the cases were classified wrongly.
+
+### Getting and cleaning the data
+We'll download the data directly from the given [webpage](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har#dataset).
+Note that we're directly going to split the train set into a training and a validation set. so that we can save the test set for the final test. For reproducability and since it takes some time to load, we're going to set a seed and cache the result.
+```{r cache = TRUE}
+set.seed(42)
+train <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+trainIndex <- createDataPartition(y=train$classe, p= 0.8, list = FALSE)
+training <- train[trainIndex,]
+validation <- train[-trainIndex,]
+test <- read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+```
+The data consists of the measured movement of six young health participants who were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: 
+```{r echo = FALSE}
+description <- data.frame(c("A","B","C","D","E"), c("exactly according to the specification", 
+                                            "throwing the elbows to the front",
+                                            "lifting the dumbbell only halfway",
+                                            "lowering the dumbbell only halfway",
+                                            "throwing the hips to the front"))
+names(description) <- c("Classe", "description")
+kable(description) %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
+Back to the data.
+we're going to eliminate the rows which have to many missing values and we're going to eliminate the rows which have a variance near zero, because they won't be any good for our prediction.
+Note that we'll directly apply the same cleaning to the validation und test-data.
+```{r}
+nzv <- nearZeroVar(training)
+if (length(nzv)>0) {
+  training <- training[,-nzv]
+  validation <- validation[,-nzv]
+  test <- test[,-nzv]
+}
+```
+There are still a lot of columns with many NAs. We'd like to remove them to.
+```{r}
+missing <- is.na(training)
+omit <- which(colSums(missing) > 15000)
+training <- training[,-omit]
+validation <- validation[,-omit]
+test <- test[,-omit]
+```
+Now we have 3 sets, training, validation and test, each with 59 variables, including Classe and all of them are complete cases.
+Lastly we'll remove the timestamps and the variable X, which is just an number indicating which sample we're looking at.
+```{r}
+training <- training[,-(1:6)]
+validation <- validation[,-(1:6)]
+test <- test[,-(1:6)]
+```
+By now, I think, our data is ready to be worked with,
+
+## Model fitting
+### Decision Tree
+Since we're working on a classification problem, we're going to try modelling a decision tree and later discussing, if a random forest (meaning multiple trees) would also be a good approach.
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 10,
+                     repeats = 10)
+tree <-  train(classe~., data = training, method = "rpart", trControl= ctrl)
+fancyRpartPlot(tree$finalModel)
+```
+That looks suspiciously wrong. Not one time a classe D was predicted, that's probably not good enough. a look at the confusion matrix isn't any better
+```{r}
+pred <- predict(tree, newdata = training)
+confusionMatrix(pred, training$classe)[2]
+confusionMatrix(pred, training$classe)[3]
+```
+
+Yeah... no. An Accuracy of below 0.5 won't be aceptable.
+
+### Random Forest
+Next try will be with a random forest. In the hope, that we'll get some more convincing results.
+```{r}
+forest <- randomForest(classe~., data = training, ntree = 500)
+pred <- predict(forest, newdata = training)
+confusionMatrix(pred, training$classe)[2]
+confusionMatrix(pred, training$classe)[3]
+```
+Let's be honest, that look kind of suspicous the other way round. But since everything done is reproducible, lets go on with it and test the model on the validation set.
+
+```{r}
+predval <- predict(forest, newdata = validation)
+confusionMatrix(predval, validation$classe)[2]
+confusionMatrix(predval, validation$classe)[3]
+```
+13 out of nearly 4'000 observations wrongly classified and an acurracy of neraly 1. I think we're going to keep this model and directly use it on the testing case.
+
+```{r}
+predtest <- data.frame(predict(forest, newdata = test))
+names(predtest) <- c("prediction")
+kable(predtest) %>% 
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left")
+```
